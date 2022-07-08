@@ -13,3 +13,10 @@ tokio = "1"
 bytes = "1"
 tracing = "0"
 tracing-subscriber = "0"
+
+[profile.release]
+lto = true
+opt-level = 3
+incremental = false
+strip = true
+codegen-units = 1

@@ -1,5 +1,7 @@
+extern crate core;
+
 use std::error::Error;
-use std::io::{BufRead, stdin, stdout, Write};
+use std::{mem, thread};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -12,17 +14,17 @@ use ricq::device::Device;
 use ricq::ext::common::after_login;
 use ricq::handler::DefaultHandler;
 use tokio::{fs, io, runtime};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::net::TcpSocket;
 use tokio::task::yield_now;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, Level};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 static HELP_INFO: &str = "\
 RQ Login Helper
 help -> Show this info
-plogin <qq> <password> -> Login with password
+login <qq> <password> -> Login with password
 qrlogin <qq> -> Login with qrcode
 
 exit | quit -> Close this program
@@ -58,7 +60,7 @@ macro_rules! unwrap_result_or_err {
         match ($($x)+) {
             Ok(s) => s,
             Err(e) => {
-                println!("Error: {:?}", e);
+                error!("{:?}", e);
                 continue;
             },
         }
@@ -74,6 +76,12 @@ fn main() -> MainResult {
         .build()?;
 
     tracing_subscriber::registry()
+        .with(tracing_subscriber::filter::filter_fn(|m| {
+            match m.level() {
+                &Level::TRACE => false,
+                _ => true
+            }
+        }))
         .with(tracing_subscriber::fmt::layer().with_target(true))
         .init();
 
@@ -83,18 +91,22 @@ fn main() -> MainResult {
 }
 
 async fn main0() -> MainResult {
-    let mut stdout = stdout().lock();
-    let mut stdin = stdin().lock();
+    let mut stdout = tokio::io::stdout();
+    let stdin = tokio::io::stdin();
+    let mut stdin = BufReader::new(stdin);
 
     let mut buf = String::new();
 
+    'main:
     loop {
-        print!(">>");
-        stdout.flush()?;
+        //print!(">>");
+        stdout.write_all(">>".as_bytes()).await?;
+        stdout.flush().await?;
 
-        buf.clear();
-        stdin.read_line(&mut buf)?;
-        let s = buf.trim_end();
+        stdin.read_line(&mut buf).await?;
+
+        let s = mem::take(&mut buf);
+        let s = s.trim_end();
 
         let spl: Vec<&str> = s.split(' ').collect();
         let first = *spl.first().expect("Cannot be None");
@@ -104,7 +116,7 @@ async fn main0() -> MainResult {
             "" => println!(),
             "help" => println!("{}", HELP_INFO),
             "exit" | "quit" => break,
-            "plogin" => {
+            "login" => {
                 let account = unwrap_option_or_help!(spl.get(1));
                 p.push(account);
                 if !p.is_dir() { fs::create_dir(&p).await?; }
@@ -113,6 +125,10 @@ async fn main0() -> MainResult {
 
                 let password = unwrap_option_or_help!(spl.get(2));
 
+                let client = get_client(&p).await?;
+                let mut resp = client.password_login(account, password).await?;
+
+                println!("{:?}", resp);
             }
             "qrlogin" => {
                 let account = unwrap_option_or_help!(spl.get(1));
@@ -169,7 +185,7 @@ async fn main0() -> MainResult {
                         }
                         QRCodeState::Canceled => {
                             error!("已取消扫码");
-                            break;
+                            continue 'main;
                         }
                         QRCodeState::Timeout => {
                             state = client.fetch_qrcode().await?;
@@ -196,8 +212,6 @@ async fn main0() -> MainResult {
             }
             _ => println!("Unknown command '{}', use 'help' to show the help info", first)
         }
-
-        yield_now().await;
     }
 
     Ok(())
@@ -234,7 +248,9 @@ async fn get_client<P: AsRef<Path>>(dir: P) -> io::Result<Arc<Client>> {
     );
     let client = Arc::new(client);
 
-    let stream = TcpStream::connect(client.get_address()).await?;
+    //let addr = SocketAddr::new(Ipv4Addr::new(113, 96, 18, 253).into(), 80);
+    let socket = TcpSocket::new_v4()?;
+    let stream = socket.connect(client.get_address()).await?;
 
     let client0 = client.clone();
     tokio::spawn(async move { client0.start(stream).await; });
