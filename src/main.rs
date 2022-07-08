@@ -1,13 +1,15 @@
 extern crate core;
 
+use std::mem;
 use std::error::Error;
-use std::{mem, thread};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
+use qrcode::QrCode;
+use qrcode::render::unicode;
 use ricq::{Client, LoginResponse, QRCodeConfirmed, QRCodeImageFetch, QRCodeState, version};
 use ricq::client::Token;
 use ricq::device::Device;
@@ -25,7 +27,7 @@ static HELP_INFO: &str = "\
 RQ Login Helper
 help -> Show this info
 login <qq> <password> -> Login with password
-qrlogin <qq> -> Login with qrcode
+qrlogin [qq] -> Login with qrcode
 
 exit | quit -> Close this program
 -------------------------------------------------
@@ -70,11 +72,6 @@ macro_rules! unwrap_result_or_err {
 type MainResult = Result<(), Box<dyn Error>>;
 
 fn main() -> MainResult {
-    let rt = runtime::Builder::new_multi_thread()
-        .worker_threads(4)
-        .enable_all()
-        .build()?;
-
     tracing_subscriber::registry()
         .with(tracing_subscriber::filter::filter_fn(|m| {
             match m.level() {
@@ -84,6 +81,11 @@ fn main() -> MainResult {
         }))
         .with(tracing_subscriber::fmt::layer().with_target(true))
         .init();
+
+    let rt = runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .enable_all()
+        .build()?;
 
     println!("{}", WELCOME_INFO);
 
@@ -100,7 +102,7 @@ async fn main0() -> MainResult {
     'main:
     loop {
         //print!(">>");
-        stdout.write_all(">>".as_bytes()).await?;
+        stdout.write_all(b">>").await?;
         stdout.flush().await?;
 
         stdin.read_line(&mut buf).await?;
@@ -125,18 +127,28 @@ async fn main0() -> MainResult {
 
                 let password = unwrap_option_or_help!(spl.get(2));
 
-                let client = get_client(&p).await?;
+                let device = device_or_default(&p).await;
+                let client = get_client(device).await?;
+
                 let mut resp = client.password_login(account, password).await?;
+
 
                 println!("{:?}", resp);
             }
             "qrlogin" => {
-                let account = unwrap_option_or_help!(spl.get(1));
-                unwrap_result_or_err!(i64::from_str(account));
-                p.push(account);
-                if !p.is_dir() { fs::create_dir(&p).await?; }
+                let device = match spl.get(1) {
+                    Some(account) => {
+                        unwrap_result_or_err!(i64::from_str(account));
+                        p.push(account);
+                        if !p.is_dir() { fs::create_dir(&p).await?; }
+                        device_or_default(&p).await
+                    }
+                    None => {
+                        Device::random()
+                    }
+                };
 
-                let client = get_client(&p).await?;
+                let client = get_client(device).await?;
 
                 let mut state = client.fetch_qrcode().await?;
 
@@ -152,6 +164,10 @@ async fn main0() -> MainResult {
                             img_file.write_all(image_data).await?;
                             signature = Some(sig.clone());
                             info!("已获取二维码，位于 ./qr.png");
+
+                            if let Ok(s) = get_qr(image_data) {
+                                println!("{}", s);
+                            }
                         }
                         QRCodeState::WaitingForScan => {
                             info!("等待扫码");
@@ -192,6 +208,10 @@ async fn main0() -> MainResult {
                             if let QRCodeState::ImageFetch(ref fe) = state {
                                 img_file.write_all(&fe.image_data).await?;
                                 signature = Some(fe.sig.clone());
+
+                                if let Ok(s) = get_qr(&fe.image_data) {
+                                    println!("{}", s);
+                                }
                             }
 
                             error!("超时，重新生成二维码");
@@ -206,6 +226,18 @@ async fn main0() -> MainResult {
                 }
 
                 after_login(&client).await;
+
+                let account = client.uin().await;
+                p.push(account.to_string());
+                if !p.is_dir() { fs::create_dir(&p).await?; }
+                {
+                    p.push("device.json");
+                    let mut f = fs::File::create(&p).await?;
+
+                    let s = serde_json::to_string_pretty(&client.device().await)?;
+                    f.write_all(s.as_bytes()).await?;
+                    p.pop();
+                }
 
                 let token = client.gen_token().await;
                 write_token_file(&token, &p).await?;
@@ -238,9 +270,7 @@ async fn device_or_default<P: AsRef<Path>>(dir: P) -> Device {
     serde_json::from_str(&s).unwrap_or_else(|_| Device::random())
 }
 
-async fn get_client<P: AsRef<Path>>(dir: P) -> io::Result<Arc<Client>> {
-    let device = device_or_default(dir).await;
-
+async fn get_client(device: Device) -> io::Result<Arc<Client>> {
     let client = Client::new(
         device,
         version::ANDROID_WATCH,
@@ -270,4 +300,45 @@ async fn write_token_file<P: AsRef<Path>>(token: &Token, dir: P) -> io::Result<(
     f.write_all(s.as_bytes()).await?;
 
     Ok(())
+}
+
+fn get_qr<B: AsRef<[u8]>>(b: B) -> Result<String, Box<dyn Error>> {
+    let img = image::load_from_memory(b.as_ref())?.to_luma8();
+
+    let mut img = rqrr::PreparedImage::prepare(img);
+    let grids = img.detect_grids();
+
+    let s = grids[0].decode()?.1;
+
+    let qr = QrCode::new(s.as_bytes())?;
+    Ok(
+        qr.render::<unicode::Dense1x2>()
+        .dark_color(unicode::Dense1x2::Light)
+        .light_color(unicode::Dense1x2::Dark)
+        .build()
+    )
+}
+
+#[cfg(test)]
+mod test {
+
+    use qrcode::QrCode;
+    use qrcode::render::unicode;
+
+    #[test]
+    fn qr() {
+        let img = image::open("qr.png").unwrap().to_luma8();
+
+        let mut img = rqrr::PreparedImage::prepare(img);
+        let grids = img.detect_grids();
+
+        let s = grids[0].decode().unwrap().1;
+
+        let qr = QrCode::new(s.as_bytes()).unwrap();
+        let s = qr.render::<unicode::Dense1x2>()
+            .dark_color(unicode::Dense1x2::Light)
+            .light_color(unicode::Dense1x2::Dark)
+            .build();
+        println!("{}", s);
+    }
 }
