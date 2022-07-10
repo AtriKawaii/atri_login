@@ -1,6 +1,6 @@
 extern crate core;
 
-use std::mem;
+use std::{env};
 use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -97,18 +97,16 @@ async fn main0() -> MainResult {
     let stdin = tokio::io::stdin();
     let mut stdin = BufReader::new(stdin);
 
-    let mut buf = String::new();
-
     'main:
     loop {
         //print!(">>");
         stdout.write_all(b">>").await?;
         stdout.flush().await?;
 
+        let mut buf = String::new();
         stdin.read_line(&mut buf).await?;
 
-        let s = mem::take(&mut buf);
-        let s = s.trim_end();
+        let s = buf.trim_end();
 
         let spl: Vec<&str> = s.split(' ').collect();
         let first = *spl.first().expect("Cannot be None");
@@ -152,7 +150,8 @@ async fn main0() -> MainResult {
 
                 let mut state = client.fetch_qrcode().await?;
 
-                let mut img_file = fs::File::create("qr.png").await?;
+                let f_name = "qr.png";
+                let mut img_file = fs::File::create(f_name).await?;
                 let mut signature = None::<Bytes>;
                 loop {
                     match state {
@@ -163,7 +162,10 @@ async fn main0() -> MainResult {
                             }) => {
                             img_file.write_all(image_data).await?;
                             signature = Some(sig.clone());
-                            info!("已获取二维码，位于 ./qr.png");
+                            let mut qr_file = env::current_dir().unwrap_or_default();
+                            qr_file.push(f_name);
+
+                            info!("已获取二维码，位于 {}", qr_file.to_str().unwrap_or(f_name));
 
                             if let Ok(s) = get_qr(image_data) {
                                 println!("{}", s);
@@ -321,7 +323,7 @@ fn get_qr<B: AsRef<[u8]>>(b: B) -> Result<String, Box<dyn Error>> {
 
 #[cfg(test)]
 mod test {
-
+    use std::borrow::Cow;
     use qrcode::QrCode;
     use qrcode::render::unicode;
 
