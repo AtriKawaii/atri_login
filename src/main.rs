@@ -1,7 +1,10 @@
+mod compat;
+
 extern crate core;
 
 use std::{env};
 use std::error::Error;
+use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -19,9 +22,11 @@ use tokio::{fs, io, runtime};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpSocket;
 use tokio::task::yield_now;
-use tracing::{debug, error, info, Level};
+use tracing::{debug, error, Event, Id, info, Level, Metadata, Subscriber};
+use tracing::span::{Attributes, Record};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
+use crate::compat::mirai::MiraiDeviceInfo;
 
 static HELP_INFO: &str = "\
 RQ Login Helper
@@ -128,7 +133,7 @@ async fn main0() -> MainResult {
                 let device = device_or_default(&p).await;
                 let client = get_client(device).await?;
 
-                let mut resp = client.password_login(account, password).await?;
+                let resp = client.password_login(account, password).await?;
 
 
                 println!("{:?}", resp);
@@ -236,7 +241,16 @@ async fn main0() -> MainResult {
                     p.push("device.json");
                     let mut f = fs::File::create(&p).await?;
 
-                    let s = serde_json::to_string_pretty(&client.device().await)?;
+                    let device = client.device().await;
+                    let s = serde_json::to_string_pretty(&device)?;
+                    f.write_all(s.as_bytes()).await?;
+                    p.pop();
+
+                    p.push("device.mirai.json");
+                    let mut f = fs::File::create(&p).await?;
+
+                    let mirai: MiraiDeviceInfo = device.into();
+                    let s = serde_json::to_string_pretty(&mirai)?;
                     f.write_all(s.as_bytes()).await?;
                     p.pop();
                 }
@@ -323,9 +337,12 @@ fn get_qr<B: AsRef<[u8]>>(b: B) -> Result<String, Box<dyn Error>> {
 
 #[cfg(test)]
 mod test {
-    use std::borrow::Cow;
+
     use qrcode::QrCode;
     use qrcode::render::unicode;
+
+    use ricq::device::Device;
+    use crate::compat::mirai::{MiraiDeviceInfo};
 
     #[test]
     fn qr() {
@@ -342,5 +359,117 @@ mod test {
             .light_color(unicode::Dense1x2::Dark)
             .build();
         println!("{}", s);
+    }
+
+    #[test]
+    fn byte_8() {
+        let a = [
+            12u8,
+            64,
+            241,
+            114,
+            202,
+            68,
+            189,
+            13,
+            133,
+            122,
+            67,
+            241,
+            146,
+            140,
+            247,
+            134
+        ];
+
+        let mut str = String::new();
+
+        for byte in a {
+            let s = format!("{:02x}", byte);
+            str.push_str(&s);
+        }
+        println!("{}", str.len());
+    }
+
+    #[test]
+    fn d_to_mirai() {
+        let d = Device::random();
+        let mirai: MiraiDeviceInfo = d.into();
+
+
+
+        println!("{:#?}", mirai);
+    }
+
+    #[test]
+    fn mirai_d() {
+        let mirai_device = r#"
+        {
+    "deviceInfoVersion": 2,
+    "data": {
+        "display": "OPR1.170623.027",
+        "product": "Huawei Mediapad M3",
+        "device": "hwbeethoven",
+        "board": "hi3650",
+        "brand": "Huawei",
+        "model": "hwbeethoven",
+        "bootloader": "unknown",
+        "fingerprint": "Huawei/BTV/hi3650:6.0/MRA58K/huawei12151809:user/release-keys",
+        "bootId": "071BD136-30B7-4778-7037-B8AC5A714E27",
+        "procVersion": "Linux version 3.0.31-7EIDAfp4 (android-build@xxx.xxx.xxx.xxx.com)",
+        "baseBand": "",
+        "version": {
+            "incremental": "eng.huawei.20161215.180805",
+            "release": "6.0",
+            "codename": "REL",
+            "sdk": 23
+        },
+        "simInfo": "T-Mobile",
+        "osType": "android",
+        "macAddress": "4c:50:77:35:4C:A5",
+        "wifiBSSID": "02:00:00:00:00:00",
+        "wifiSSID": "<unknown ssid>",
+        "imsiMd5": "04bb1f9a2ae7b9d0eba3500795cae686",
+        "imei": "865881031117358",
+        "apn": "wifi"
+    }
+}
+        "#;
+
+        let mirai_device: MiraiDeviceInfo = serde_json::from_str(mirai_device).unwrap();
+        println!("{:#?}", mirai_device);
+    }
+}
+
+struct CliLogger;
+
+impl Subscriber for CliLogger {
+    fn enabled(&self, metadata: &Metadata<'_>) -> bool {
+        todo!()
+    }
+
+    fn new_span(&self, span: &Attributes<'_>) -> Id {
+        todo!()
+    }
+
+    fn record(&self, span: &Id, values: &Record<'_>) {
+        todo!()
+    }
+
+    fn record_follows_from(&self, span: &Id, follows: &Id) {
+        todo!()
+    }
+
+    fn event(&self, event: &Event<'_>) {
+
+        todo!()
+    }
+
+    fn enter(&self, span: &Id) {
+        todo!()
+    }
+
+    fn exit(&self, span: &Id) {
+        todo!()
     }
 }
