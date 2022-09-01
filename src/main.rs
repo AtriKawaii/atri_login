@@ -2,7 +2,6 @@ extern crate core;
 
 use std::env;
 use std::error::Error;
-use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -20,8 +19,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpSocket;
 use tokio::task::yield_now;
 use tokio::{fs, io, runtime};
-use tracing::span::{Attributes, Record};
-use tracing::{debug, error, info, Event, Id, Level, Metadata, Subscriber};
+use tracing::{debug, error, info, Level};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
