@@ -1,5 +1,5 @@
 [package]
-name = "rq_login"
+name = "atri_login"
 version = "0.1.0"
 edition = "2021"
 
@@ -18,8 +18,6 @@ rqrr = "0"
 image = "0"
 
 [profile.release]
-lto = true
-opt-level = 3
-incremental = false
+lto = "thin"
 strip = true
 codegen-units = 1
