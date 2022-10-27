@@ -19,15 +19,13 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpSocket;
 use tokio::task::yield_now;
 use tokio::{fs, io, runtime};
-use tracing::{debug, error, info, Level};
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
+use tracing::{debug, error, info, warn, Level};
 
 static HELP_INFO: &str = "\
-RQ Login Helper
+Atri Login Helper
 help -> Show this info
-login <qq> <password> -> Login with password
-qrlogin [qq] -> Login with qrcode
+login <uin> <password> -> Login with password
+qrlogin [uin] -> Login with qrcode
 
 exit | quit -> Close this program
 -------------------------------------------------
@@ -37,9 +35,9 @@ to 'device.json', and the login token will write to 'token.json'
 
 static WELCOME_INFO: &str = "\
 --------------------------
-Welcome to RQ Login Helper
+Welcome to Atri Login Helper
 --------------------------
-This program can help you to login qq
+This program can help you to login atri_bot
 and generate the device info.
 
 Author: LaoLittle (https://github.com/LaoLittle)
@@ -72,12 +70,10 @@ macro_rules! unwrap_result_or_err {
 type MainResult = Result<(), Box<dyn Error>>;
 
 fn main() -> MainResult {
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::filter::filter_fn(|m| match m.level() {
-            &Level::TRACE => false,
-            _ => true,
-        }))
-        .with(tracing_subscriber::fmt::layer().with_target(true))
+    tracing_subscriber::fmt()
+        .with_target(false)
+        .with_ansi(true)
+        .with_max_level(Level::DEBUG)
         .init();
 
     let rt = runtime::Builder::new_multi_thread()
@@ -279,8 +275,24 @@ async fn get_client(device: Device) -> io::Result<Arc<Client>> {
     let client = Arc::new(client);
 
     //let addr = SocketAddr::new(Ipv4Addr::new(113, 96, 18, 253).into(), 80);
-    let socket = TcpSocket::new_v4()?;
-    let stream = socket.connect(client.get_address()).await?;
+
+    let mut addrs = client.get_address_list().await;
+    let total = addrs.len();
+    let mut now = 0;
+
+    let stream = loop {
+        let socket = TcpSocket::new_v4()?;
+        match socket
+            .connect(addrs.pop().ok_or(io::ErrorKind::AddrNotAvailable)?)
+            .await
+        {
+            Ok(s) => break s,
+            Err(e) => {
+                now += 1;
+                warn!("连接失败: {}, 尝试重连({}/{})", e, now, total);
+            }
+        }
+    };
 
     let client0 = client.clone();
     tokio::spawn(async move {
