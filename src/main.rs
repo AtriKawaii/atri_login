@@ -2,7 +2,9 @@ extern crate core;
 
 use std::env;
 use std::error::Error;
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -13,7 +15,7 @@ use qrcode::QrCode;
 use ricq::client::Token;
 use ricq::device::Device;
 use ricq::ext::common::after_login;
-use ricq::handler::DefaultHandler;
+use ricq::handler::QEvent;
 use ricq::{version, Client, LoginResponse, QRCodeConfirmed, QRCodeImageFetch, QRCodeState};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpSocket;
@@ -189,8 +191,8 @@ async fn main0() -> MainResult {
                                 }
                             }
 
-                            info!("登陆成功");
                             debug!("{:?}", login_resp);
+                            info!("登陆成功");
                             break;
                         }
                         QRCodeState::Canceled => {
@@ -198,6 +200,8 @@ async fn main0() -> MainResult {
                             continue 'main;
                         }
                         QRCodeState::Timeout => {
+                            error!("超时，重新生成二维码");
+
                             state = client.fetch_qrcode().await?;
                             if let QRCodeState::ImageFetch(ref fe) = state {
                                 img_file.write_all(&fe.image_data).await?;
@@ -207,8 +211,6 @@ async fn main0() -> MainResult {
                                     println!("{}", s);
                                 }
                             }
-
-                            error!("超时，重新生成二维码");
                         }
                     }
 
@@ -271,7 +273,16 @@ async fn device_or_default<P: AsRef<Path>>(dir: P) -> Device {
 }
 
 async fn get_client(device: Device) -> io::Result<Arc<Client>> {
-    let client = Client::new(device, version::ANDROID_WATCH, DefaultHandler);
+    struct Nop;
+
+    impl ricq::handler::Handler for Nop {
+        fn handle<'a: 'b, 'b>(&'a self, _event: QEvent) -> Pin<Box<dyn Future<Output=()> + Send + 'b>>
+        {
+            Box::pin(async {})
+        }
+    }
+
+    let client = Client::new(device, version::ANDROID_WATCH, Nop);
     let client = Arc::new(client);
 
     //let addr = SocketAddr::new(Ipv4Addr::new(113, 96, 18, 253).into(), 80);
