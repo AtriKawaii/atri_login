@@ -94,8 +94,7 @@ async fn main0() -> MainResult {
     let mut stdin = BufReader::new(stdin);
 
     'main: loop {
-        //print!(">>");
-        stdout.write_all(b">>").await?;
+        stdout.write_all(b">> ").await?;
         stdout.flush().await?;
 
         let mut buf = String::new();
@@ -276,13 +275,15 @@ async fn get_client(device: Device) -> io::Result<Arc<Client>> {
     struct Nop;
 
     impl ricq::handler::Handler for Nop {
-        fn handle<'a: 'b, 'b>(&'a self, _event: QEvent) -> Pin<Box<dyn Future<Output=()> + Send + 'b>>
-        {
+        fn handle<'a: 'b, 'b>(
+            &'a self,
+            _event: QEvent,
+        ) -> Pin<Box<dyn Future<Output = ()> + Send + 'b>> {
             Box::pin(async {})
         }
     }
 
-    let client = Client::new(device, version::ANDROID_WATCH, Nop);
+    let client = Client::new(device, version::MACOS, Nop);
     let client = Arc::new(client);
 
     //let addr = SocketAddr::new(Ipv4Addr::new(113, 96, 18, 253).into(), 80);
