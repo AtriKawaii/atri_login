@@ -78,8 +78,7 @@ fn main() -> MainResult {
         .with_max_level(Level::DEBUG)
         .init();
 
-    let rt = runtime::Builder::new_multi_thread()
-        .worker_threads(4)
+    let rt = runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
 
@@ -136,7 +135,9 @@ async fn main0() -> MainResult {
                         if !p.is_dir() {
                             fs::create_dir(&p).await?;
                         }
-                        device_or_default(&p).await
+                        let d = device_or_default(&p).await;
+                        p.pop();
+                        d
                     }
                     None => Device::random(),
                 };

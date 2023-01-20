@@ -9,13 +9,16 @@ edition = "2021"
 ricq = "0"
 serde = "1"
 serde_json = "1"
-tokio = "1"
 bytes = "1"
 tracing = "0"
 tracing-subscriber = "0"
 qrcode = { version = "0", default-features = false }
 rqrr = "0"
 image = "0"
+
+[dependencies.tokio]
+version = "1"
+features = ["rt", "io-std", "io-util", "fs"]
 
 [profile.release]
 panic = "abort"
